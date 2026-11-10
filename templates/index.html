@@ -43,6 +43,20 @@
          vertical-align:-2px; margin-right:6px; }
   @keyframes sp{ to{ transform:rotate(360deg); } }
   footer{ text-align:center; color:#8a97ad; font-size:12px; padding:20px; }
+  .section{ margin:10px 2px -8px; font-size:13px; font-weight:700; letter-spacing:.8px;
+            text-transform:uppercase; color:#61708a; display:flex; align-items:center; gap:10px; }
+  .section::after{ content:""; flex:1; height:1px; background:var(--line); }
+  .card.hero{ border:2px solid var(--blue); }
+  .card.cash{ border:2px solid var(--green); }
+  .card.cash button.go{ background:var(--green); }
+  .card.cash button.go:hover{ background:#2a431b; }
+  .card.cash button.go:disabled{ background:#a9b6c9; }
+  .fields{ display:flex; flex-wrap:wrap; gap:12px; margin-top:14px; }
+  .field{ flex:1 1 220px; display:flex; flex-direction:column; gap:5px; font-size:13px; color:#4a5a75; }
+  .field input, .field select{ border:1px solid #c6d0e0; border-radius:8px; padding:9px 10px;
+            font-size:14px; background:#fff; color:#1a2233; min-width:0; }
+  .field small{ color:#8a97ad; }
+  .hidden{ display:none !important; }
 </style>
 </head>
 <body>
@@ -51,6 +65,26 @@
   <p>Upload a file, press the button, get your file back.</p>
 </header>
 <main>
+
+  <div class="section">W2 workers</div>
+
+  <!-- ALL-IN-ONE (W2) -->
+  <section class="card hero" id="tool0">
+    <h2>All-in-one: Paystubs &rarr; Paystubs + Time Cards</h2>
+    <p class="sub">Upload just the W2 <b>paystubs PDF</b> and press one button. It does steps 1, 2 and 3 for you and gives back the final PDF: each employee's paystub on top with their matching time card below.</p>
+    <div class="row">
+      <label class="drop" data-for="t0pdf">Choose paystubs PDF<small>.pdf</small>
+        <input type="file" id="t0pdf" accept=".pdf"></label>
+      <button class="go" data-tool="t0">Make Final PDF</button>
+    </div>
+    <details>
+      <summary>Optional: days off per employee (JSON)</summary>
+      <textarea id="t0days" placeholder='{"Mariya": ["Mon"], "Qadir": ["Tue","Fri"]}'></textarea>
+    </details>
+    <div class="status" id="t0status"></div>
+  </section>
+
+  <div class="section">W2 &mdash; one step at a time</div>
 
   <!-- TOOL 1 -->
   <section class="card" id="tool1">
@@ -94,6 +128,40 @@
     <div class="status" id="t3status"></div>
   </section>
 
+  <div class="section">Cash workers</div>
+
+  <!-- CASH -->
+  <section class="card cash" id="tool4">
+    <h2>Cash: Paystubs + Time Cards</h2>
+    <p class="sub">Upload <b>either</b> the cash <b>paystubs PDF</b> <b>or</b> the <b>Weekly Pay .xlsx</b>. You get back one PDF with each cash worker's paystub on top and a matching time card below. From the spreadsheet, the paystub is made from the <i>Cash</i> column of the week you pick (first 40 hours regular, the rest overtime at 1.5&times;).</p>
+    <div class="row">
+      <label class="drop" data-for="t4file">Choose paystubs PDF or Weekly Pay .xlsx<small>.pdf or .xlsx</small>
+        <input type="file" id="t4file" accept=".pdf,.xlsx,.xlsm"></label>
+      <button class="go" data-tool="t4">Make Cash Paystubs + Time Cards</button>
+    </div>
+    <div class="fields">
+      <label class="field">Employees
+        <input type="text" id="t4names" value="Marvin, Santiago">
+        <small>Separate names with commas. Clear the box to include everyone.</small>
+      </label>
+      <label class="field hidden" id="t4sheetwrap">Week (spreadsheet tab)
+        <select id="t4sheet"></select>
+        <small>The first tab is the newest week.</small>
+      </label>
+    </div>
+    <details>
+      <summary>Optional: hourly rate on the paystub, days off</summary>
+      <div class="fields">
+        <label class="field">Hourly rate printed on the paystub
+          <input type="number" id="t4rate" value="17.00" step="0.01" min="0.01">
+          <small>Only used for the spreadsheet. Overtime is 1.5&times; this rate.</small>
+        </label>
+      </div>
+      <textarea id="t4days" placeholder='{"Marvin": ["Mon","Thu"], "Santiago": ["Wed"]}'></textarea>
+    </details>
+    <div class="status" id="t4status"></div>
+  </section>
+
 </main>
 <footer>Runs entirely on this computer. Time cards are a model total, not a real attendance record.</footer>
 
@@ -112,9 +180,28 @@ function bind(id){
     if(e.dataTransfer.files.length){ input.files=e.dataTransfer.files;
       input.dispatchEvent(new Event('change')); }});
 }
-['t1pdf','t2xlsx','t3ps','t3tc'].forEach(bind);
+['t0pdf','t1pdf','t2xlsx','t3ps','t3tc','t4file'].forEach(bind);
 
 function setStatus(el,cls,html){ el.className='status '+cls; el.innerHTML=html; }
+
+// Cash: when a workbook is chosen, list its tabs so a week can be picked.
+document.getElementById('t4file').addEventListener('change',async()=>{
+  const f=document.getElementById('t4file').files[0];
+  const wrap=document.getElementById('t4sheetwrap'), sel=document.getElementById('t4sheet');
+  const s=document.getElementById('t4status');
+  sel.innerHTML=''; wrap.classList.add('hidden');
+  if(!f || !/\.xls[xm]$/i.test(f.name)) return;
+  setStatus(s,'busy','<span class="spin"></span>Reading the weeks in the spreadsheet…');
+  try{
+    const fd=new FormData(); fd.append('xlsx',f);
+    const res=await fetch('/api/xlsx-sheets',{method:'POST',body:fd});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error||('Error '+res.status));
+    data.sheets.forEach(n=>{ const o=document.createElement('option'); o.value=o.textContent=n; sel.appendChild(o); });
+    wrap.classList.remove('hidden'); setStatus(s,'','');
+  }catch(e){ setStatus(s,'err','⚠ '+e.message); }
+});
+
 
 async function post(url,fd,statusEl,btn){
   setStatus(statusEl,'busy','<span class="spin"></span>Working… this can take a moment.');
@@ -136,6 +223,29 @@ async function post(url,fd,statusEl,btn){
 document.querySelectorAll('button.go').forEach(btn=>{
   btn.addEventListener('click',()=>{
     const tool=btn.dataset.tool;
+    if(tool==='t0'){
+      const f=document.getElementById('t0pdf').files[0];
+      const s=document.getElementById('t0status');
+      if(!f){ setStatus(s,'err','Please choose a paystubs PDF first.'); return; }
+      const fd=new FormData(); fd.append('pdf',f);
+      const days=document.getElementById('t0days').value.trim();
+      if(days) fd.append('daysoff_text',days);
+      post('/api/chain',fd,s,btn);
+    }
+    if(tool==='t4'){
+      const f=document.getElementById('t4file').files[0];
+      const s=document.getElementById('t4status');
+      if(!f){ setStatus(s,'err','Please choose a cash paystubs PDF or the Weekly Pay .xlsx first.'); return; }
+      const fd=new FormData(); fd.append('file',f);
+      fd.append('names',document.getElementById('t4names').value);
+      const sheet=document.getElementById('t4sheet').value;
+      if(sheet) fd.append('sheet',sheet);
+      const rate=document.getElementById('t4rate').value.trim();
+      if(rate) fd.append('rate',rate);
+      const days=document.getElementById('t4days').value.trim();
+      if(days) fd.append('daysoff_text',days);
+      post('/api/cash',fd,s,btn);
+    }
     if(tool==='t1'){
       const f=document.getElementById('t1pdf').files[0];
       const s=document.getElementById('t1status');
