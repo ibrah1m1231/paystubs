@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Local web app exposing three payroll tools, each as a one-button upload:
+"""Local web app exposing the payroll tools, each as a one-button upload:
 
+  W2 workers
+  0. All-in-one              (paystub PDF -> combined paystub + time card PDF)
   1. Paystub -> Time Cards   (paystub PDF  -> multi-sheet .xlsx)
   2. Time Card -> PDF        (timecard .xlsx -> per-employee PDF)
   3. Combine Paystubs + Time Cards (two PDFs -> merged PDF, one employee/page)
+
+  Cash workers
+  4. Cash paystubs PDF or Weekly Pay .xlsx -> combined paystub + time card PDF
 
 Everything runs locally. Uploads and outputs live in per-run temp folders that
 are cleaned up automatically.
@@ -170,6 +175,80 @@ def chain():
 
     return send_file(out, as_attachment=True,
                      download_name=os.path.basename(out),
+                     mimetype="application/pdf")
+
+
+def daysoff_file(d):
+    """Optional days-off JSON (uploaded file or pasted text) -> path, or None.
+    Raises ValueError if pasted JSON is invalid."""
+    if request.files.get("daysoff") and request.files["daysoff"].filename:
+        return save_upload(request.files["daysoff"], d)
+    text = (request.form.get("daysoff_text") or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except Exception as e:
+        raise ValueError(f"Days-off JSON is invalid: {e}")
+    path = os.path.join(d, "daysoff.json")
+    with open(path, "w") as fh:
+        json.dump(parsed, fh)
+    return path
+
+
+@app.route("/api/xlsx-sheets", methods=["POST"])
+def xlsx_sheets():
+    """List the tabs of an uploaded workbook (for the cash week picker)."""
+    f = request.files.get("xlsx")
+    if not f or not f.filename:
+        return jsonify(error="Please choose a .xlsx file."), 400
+    d = run_dir()
+    path = save_upload(f, d)
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(path, read_only=True)
+        names = list(wb.sheetnames)
+        wb.close()
+    except Exception as e:
+        return jsonify(error=f"Couldn't read that workbook: {e}"), 400
+    return jsonify(sheets=names)
+
+
+@app.route("/api/cash", methods=["POST"])
+def cash():
+    """Cash workers: paystubs PDF OR Weekly Pay .xlsx -> one PDF with each
+    selected employee's paystub on top and a matching time card below."""
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify(error="Please choose a cash paystubs PDF or a Weekly Pay .xlsx."), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in (".pdf", ".xlsx", ".xlsm"):
+        return jsonify(error="Please choose a .pdf or .xlsx file."), 400
+    d = run_dir()
+    src = save_upload(f, d)
+    out = os.path.join(d, "Cash Paystubs with Time Cards.pdf")
+    cmd = [sys.executable, os.path.join(SKILLS, "cash.py"),
+           "--input", src, "--out", out, "--workdir", os.path.join(d, "work"),
+           "--names", request.form.get("names", "")]
+    sheet = (request.form.get("sheet") or "").strip()
+    if sheet and ext != ".pdf":
+        cmd += ["--sheet", sheet]
+    rate = (request.form.get("rate") or "").strip()
+    if rate:
+        cmd += ["--rate", rate]
+    try:
+        dpath = daysoff_file(d)
+    except ValueError as e:
+        return jsonify(error=str(e)), 400
+    if dpath:
+        cmd += ["--daysoff", dpath]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0 or not os.path.isfile(out):
+        return jsonify(error=(proc.stderr or proc.stdout or "Cash paystubs failed").strip()), 500
+    name = "Cash Paystubs with Time Cards.pdf"
+    if sheet and ext != ".pdf":
+        name = f"Cash Paystubs with Time Cards {sheet}.pdf"
+    return send_file(out, as_attachment=True, download_name=name,
                      mimetype="application/pdf")
 
 

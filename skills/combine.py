@@ -16,6 +16,7 @@ import re
 
 import pdfplumber
 from pypdf import PdfReader, PdfWriter
+from pypdf.generic import RectangleObject
 
 PAGE_W, PAGE_H = 612.0, 792.0
 MARGIN = 18.0
@@ -83,6 +84,17 @@ def parse_pdf(path, is_paystub):
                 m = re.search(r"^([A-Z][A-Z .'-]+?),.*\*\*\*-\*\*-", text, re.M)
                 if m:
                     name = m.group(1).strip().title()
+                else:
+                    # Cash stubs: no SSN on the name line; the name is the line
+                    # right after the "Employee  SSN" header.
+                    lines = text.splitlines()
+                    for li, line in enumerate(lines[:-1]):
+                        if re.match(r"^\s*Employee\s+SSN\b", line):
+                            nm = re.sub(r"\*{3}-\*{2}-\d+", "", lines[li + 1]).split(",")[0]
+                            nm = re.sub(r"[\s.]+$", "", nm).strip()
+                            if nm:
+                                name = nm.title() if nm.isupper() else nm
+                            break
                 h = re.search(r"Hourly\s+(\d{1,3}:\d{2})", text)
                 if h:
                     hours = hm_to_min(h.group(1))
@@ -150,6 +162,12 @@ def match(paystubs, timecards):
 def place(dest, reader, item, y_bottom, scale):
     src = reader.pages[item["page"]]
     x0, yb, x1, yt = item["bbox_native"]
+    # pypdf clips the merged page to its crop box (older versions: trim box),
+    # so shrink both to the content box -- otherwise anything outside it
+    # (e.g. the paystub footer line) bleeds onto the time card.
+    box = RectangleObject((x0 - 1, yb - 1, x1 + 1, yt + 1))
+    src.cropbox = box
+    src.trimbox = box
     tx = MARGIN
     ctm = (scale, 0, 0, scale, tx - x0 * scale, y_bottom - yb * scale)
     dest.merge_transformed_page(src, ctm, expand=False)
