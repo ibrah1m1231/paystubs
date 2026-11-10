@@ -235,8 +235,8 @@ def read_cash_rows(path, sheet):
         if "," in name:  # "Chauhan, Pritpal" -> "Pritpal Chauhan"
             last, first = [p.strip() for p in name.split(",", 1)]
             name = f"{first} {last}".strip()
-        if name.isupper():
-            name = name.title()
+        if name.isupper() or any(w[:1].islower() for w in name.split()):
+            name = name.title()  # "JASHANDEEP SINGH" / "Marvin morales"
         amount = num(cell(rows_v, r, cash_col))
         if amount is None:
             amount = num(cell(rows_f, r, cash_col))
